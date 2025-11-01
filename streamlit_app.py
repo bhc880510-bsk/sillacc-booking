@@ -1008,7 +1008,7 @@ if 'course_input' not in st.session_state:
 if 'order_input' not in st.session_state:
     st.session_state.order_input = "역순(▼)"  # Default to Reverse order
 if 'delay_input' not in st.session_state:
-    st.session_state.delay_input = "1.0"  # Default delay
+    st.session_state.delay_input = "2.5"  # Default delay
 if 'test_mode_checkbox' not in st.session_state:
     st.session_state.test_mode_checkbox = True  # Default to Test Mode ON
 # [새로 추가] ID 유효성 상태를 추적하는 변수
@@ -1380,4 +1380,5 @@ if st.session_state.get('_button_clicked_status_change', False):
     st.session_state['_button_clicked_status_change'] = False
 
     st.rerun()
+
 
