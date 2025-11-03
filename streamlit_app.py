@@ -412,7 +412,7 @@ class APIBookingCore:
             self.log_message(f"❌ 캘린더 로드 중 예외 오류: {e}")
             return False
 
-    # 'golfTimeList' 호출
+    # 'golfTimeList' 호출 (타임아웃 3초, 즉시 재시도 적용)
     def get_all_available_times(self, date):
         """Fetches available tee times (as HTML) for a given date."""
         self.log_message(f"⏳ {date} 모든 코스 예약 가능 시간대 조회 중 (HTML 요청)...")
@@ -432,7 +432,7 @@ class APIBookingCore:
         payload = {
             "clickTdId": f"B{date}",
             "clickTdClass": "",
-            "workMonth": target_month,  # <<< 핵심 수정: target_month 사용
+            "workMonth": target_month,
             "workDate": date,
             "bookgDate": "",
             "bookgTime": "",
@@ -449,25 +449,32 @@ class APIBookingCore:
             "agreeYn": "Y"
         }
 
-        try:
-            res = self.session.post(url, headers=headers, data=payload, timeout=5.0, verify=False)
-            res.raise_for_status()
+        # --- [수정된 3회 재시도 루프: 3.0초 타임아웃, 즉시 재시도] ---
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 📌 Timeout 3.0초 설정
+                res = self.session.post(url, headers=headers, data=payload, timeout=3.0, verify=False)
+                res.raise_for_status()
 
-            if 'text/html' in res.headers.get('content-type', ''):
-                self.log_message(f"✅ 'golfTimeList' HTML 응답 수신. (파싱 시작)")
-                return res.text  # HTML 텍스트 반환
-            else:
-                self.log_message(f"❌ 'golfTimeList' 응답 유형 오류: {res.headers.get('content-type')}")
-                return None  # 실패 시 None 반환
+                if 'text/html' in res.headers.get('content-type', ''):
+                    self.log_message(f"✅ 'golfTimeList' HTML 응답 수신. (파싱 시작) (시도 {attempt}/{max_retries})")
+                    return res.text  # HTML 텍스트 반환
+                else:
+                    self.log_message(
+                        f"❌ 'golfTimeList' 응답 유형 오류: {res.headers.get('content-type')}. 재시도 {attempt}/{max_retries}...")
+                    continue  # time.sleep(0.5) 제거 -> 즉시 재시도
 
-        except requests.RequestException as e:
-            self.log_message(f"❌ 'golfTimeList' 네트워크 오류: {e}")
-            return None
-        except Exception as e:
-            self.log_message(f"❌ 'golfTimeList' 예외 오류: {e}")
-            return None
+            except requests.RequestException as e:
+                self.log_message(f"❌ 'golfTimeList' 네트워크 오류: {e}. 재시도 {attempt}/{max_retries}...")
+                continue  # time.sleep(0.5) 제거 -> 즉시 재시도
+            except Exception as e:
+                self.log_message(f"❌ 'golfTimeList' 예외 오류: {e}. 재시도 {attempt}/{max_retries}...")
+                continue  # time.sleep(0.5) 제거 -> 즉시 재시도
 
-    # HTML 파싱 로직 구현
+        # 3회 최종 실패
+        self.log_message(f"❌ 'golfTimeList' {max_retries}회 최종 실패.")
+        return None
     # HTML 파싱 및 코스 필터링/정렬 로직 수정
     def filter_and_sort_times(self, all_times_html, start_time_str, end_time_str, target_course_names, is_reverse):
         """
@@ -792,6 +799,10 @@ class APIBookingCore:
 def start_pre_process(message_queue, stop_event, inputs):
     """Main background thread function orchestrating the booking process."""
     global KST
+
+    # 📌 [추가] 안전 마진 설정
+    SAFETY_MARGIN_SECONDS = 0.200  # 0.2초 안전 마진 설정
+
     log_message("[INFO] ⚙️ 예약 시작 조건 확인 완료.", message_queue)
 
     try:
@@ -808,16 +819,20 @@ def start_pre_process(message_queue, stop_event, inputs):
         if stop_event.is_set(): return
 
         # 2. Server Time Check & Target Time Calculation (Initial Offset)
+        log_message("🔄 경주신라CC 서버 시간 확인 시도...", message_queue)
         time_offset = core.get_server_time_offset()
 
         # 목표 시간을 서버 시간 오프셋을 반영하여 계산 (초기값)
         target_dt_naive = datetime.datetime.strptime(f"{inputs['run_date']}{inputs['run_time']}", '%Y%m%d%H:%M:%S')
         target_dt_kst = KST.localize(target_dt_naive)
+
         # target_local_time_kst는 로직이 진행됨에 따라 계속 업데이트됩니다. (최초 보정)
-        target_local_time_kst = target_dt_kst - datetime.timedelta(seconds=time_offset)
+        # 📌 [수정] 0.2초 안전 마진 추가
+        target_local_time_kst = target_dt_kst - datetime.timedelta(seconds=time_offset) + datetime.timedelta(
+            seconds=SAFETY_MARGIN_SECONDS)
 
         log_message(
-            f"✅ [초기 목표 시간] Local KST 기준: {target_local_time_kst.strftime('%H:%M:%S.%f')[:-3]} (Offset: {time_offset:.3f}초 반영)",
+            f"✅ [초기 목표 시간] Local KST 기준: {target_local_time_kst.strftime('%H:%M:%S.%f')[:-3]} (Offset: {time_offset:.3f}초 반영, 안전 마진: {SAFETY_MARGIN_SECONDS:.3f}초 포함)",
             message_queue)
 
         # 3. FIX: Calendar Context Setting/Navigation
@@ -854,7 +869,13 @@ def start_pre_process(message_queue, stop_event, inputs):
         now_kst = datetime.datetime.now(KST)
 
         # 재동기화 시점: 최종 예약 목표 시간 (Target Server Time)의 30초 전 시점
-        re_sync_dt_kst = target_local_time_kst - datetime.timedelta(seconds=30)
+        # target_dt_kst는 서버 10:00:00을 가리킵니다. 여기에 오프셋이 반영되지 않은 순수 목표 시간
+        target_dt_naive_server = target_dt_kst.replace(tzinfo=None)  # 순수 목표 시간
+        target_dt_server = KST.localize(target_dt_naive_server)
+
+        # 서버 시간 기준 30초 전 시점을 로컬 시간으로 변환
+        re_sync_dt_kst = target_local_time_kst - datetime.timedelta(seconds=30) + datetime.timedelta(
+            seconds=SAFETY_MARGIN_SECONDS)
 
         if now_kst < re_sync_dt_kst:
             # 6-1. 30초 전 시점까지 대기 (카운트다운 없음)
@@ -871,11 +892,12 @@ def start_pre_process(message_queue, stop_event, inputs):
             log_message("⏳ 최종 예약 30초 전: 서버 시간 오차 재측정 및 보정 (부하 최소화 시점)", message_queue)
             final_time_offset = core.get_server_time_offset()
 
-            # ❗❗ 최종 목표 시간(target_dt_kst)에 새로 측정된 오프셋을 반영하여 덮어씁니다. ❗❗
-            target_local_time_kst = target_dt_kst - datetime.timedelta(seconds=final_time_offset)
+            # ❗❗ 최종 목표 시간(target_dt_kst)에 새로 측정된 오프셋과 안전 마진을 반영하여 덮어씁니다. ❗❗
+            target_local_time_kst = target_dt_kst - datetime.timedelta(seconds=final_time_offset) + datetime.timedelta(
+                seconds=SAFETY_MARGIN_SECONDS)
 
             log_message(
-                f"✅ 최종 목표 시간 재확정 (Local KST): {target_local_time_kst.strftime('%H:%M:%S.%f')[:-3]} (최종 Offset: {final_time_offset:.3f}초 반영)",
+                f"✅ 최종 목표 시간 재확정 (Local KST): {target_local_time_kst.strftime('%H:%M:%S.%f')[:-3]} (최종 Offset: {final_time_offset:.3f}초 반영, 안전 마진: {SAFETY_MARGIN_SECONDS:.3f}초 포함)",
                 message_queue)
 
         else:
@@ -958,7 +980,6 @@ def start_pre_process(message_queue, stop_event, inputs):
             pass
         log_message("✅ 백그라운드 스레드 종료.", message_queue)
 
-
 # ============================================================
 # Streamlit UI
 # ============================================================
@@ -1008,7 +1029,7 @@ if 'course_input' not in st.session_state:
 if 'order_input' not in st.session_state:
     st.session_state.order_input = "역순(▼)"  # Default to Reverse order
 if 'delay_input' not in st.session_state:
-    st.session_state.delay_input = "2.5"  # Default delay
+    st.session_state.delay_input = "1.0"  # Default delay
 if 'test_mode_checkbox' not in st.session_state:
     st.session_state.test_mode_checkbox = True  # Default to Test Mode ON
 # [새로 추가] ID 유효성 상태를 추적하는 변수
@@ -1199,6 +1220,18 @@ def check_queue_and_rerun():
 # ============================================================
 # UI 레이아웃
 # ============================================================
+# 📌 [추가] 디버깅 및 캐시 문제 해결을 위한 초기화 로직
+# 📌 [수정] 예약일 디폴트 값을 당일로 설정
+KST = pytz.timezone('Asia/Seoul') # KST 정의가 위에 있는지 확인하세요.
+today = datetime.datetime.now(KST).date()
+default_date = today # 디폴트 값을 오늘 날짜로 설정
+
+if "is_running" not in st.session_state:
+    st.session_state.is_running = False
+
+# date_input 키가 Session State에 없으면 (첫 실행 시) 디폴트 값으로 설정
+if "date_input" not in st.session_state:
+    st.session_state.date_input = default_date
 
 st.set_page_config(layout="wide", menu_items=None)
 
@@ -1289,9 +1322,17 @@ with st.container(border=True):
     # 1-2. Booking & Execution Time
     st.markdown("---")  # Separator
     st.markdown('<p class="section-header">🗓️ 예약/가동 시간 설정</p>', unsafe_allow_html=True)
+
     col3, col4, col5 = st.columns([1, 1, 1])
     with col3:
-        st.date_input("예약일", key="date_input", format="YYYY-MM-DD", disabled=st.session_state.is_running)
+        st.date_input(
+            "예약일",
+            key="date_input",
+            format="YYYY-MM-DD",
+            disabled=st.session_state.is_running,
+            # value= 인자는 제거된 상태를 유지해야 경고가 사라집니다.
+            min_value=today,  # 최소값은 오늘 날짜
+        )
     with col4:
         st.text_input("가동시작일 (YYYYMMDD)", key="run_date_input", help="API 실행 기준 날짜",
                       disabled=st.session_state.is_running)
@@ -1303,8 +1344,12 @@ with st.container(border=True):
     st.markdown('<p class="section-header">⚙️ 티타임 필터 및 우선순위</p>', unsafe_allow_html=True)
     col6, col7, col8 = st.columns([2.5, 2.5, 1.5])
     with col6:
-        start_time_options = [f"{h:02d}:00" for h in range(6, 16)]
-
+        start_time_options = []
+        for h in range(6, 17):  # 16시까지 포함해야 하므로 17까지 range 설정
+            start_time_options.append(f"{h:02d}:00")
+            # 16:30은 16시까지만 조회하므로 제외
+            if h < 16:
+                start_time_options.append(f"{h:02d}:30")
         # [최종 수정] index 인수를 완전히 제거합니다.
         # 위젯은 key="res_start_input"에 저장된 세션 상태 값을 사용합니다.
         st.selectbox(
@@ -1314,7 +1359,11 @@ with st.container(border=True):
             disabled=st.session_state.is_running
         )
 
-        end_time_options = [f"{h:02d}:00" for h in range(7, 18)]
+        end_time_options = []
+        for h in range(7, 18):  # 16시까지 포함해야 하므로 17까지 range 설정
+            end_time_options.append(f"{h:02d}:00")
+            if h < 17:
+                end_time_options.append(f"{h:02d}:30")
 
         # [최종 수정] index 인수를 완전히 제거합니다.
         # 위젯은 key="res_end_input"에 저장된 세션 상태 값을 사용합니다.
@@ -1380,5 +1429,3 @@ if st.session_state.get('_button_clicked_status_change', False):
     st.session_state['_button_clicked_status_change'] = False
 
     st.rerun()
-
-
