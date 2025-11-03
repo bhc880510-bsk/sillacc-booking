@@ -800,7 +800,7 @@ def start_pre_process(message_queue, stop_event, inputs):
     """Main background thread function orchestrating the booking process."""
     global KST
 
-    # 📌 [추가] 안전 마진 설정
+    # 📌 안전 마진 설정 (이전과 동일하게 유지)
     SAFETY_MARGIN_SECONDS = 0.200  # 0.2초 안전 마진 설정
 
     log_message("[INFO] ⚙️ 예약 시작 조건 확인 완료.", message_queue)
@@ -827,7 +827,7 @@ def start_pre_process(message_queue, stop_event, inputs):
         target_dt_kst = KST.localize(target_dt_naive)
 
         # target_local_time_kst는 로직이 진행됨에 따라 계속 업데이트됩니다. (최초 보정)
-        # 📌 [수정] 0.2초 안전 마진 추가
+        # 📌 0.2초 안전 마진 추가
         target_local_time_kst = target_dt_kst - datetime.timedelta(seconds=time_offset) + datetime.timedelta(
             seconds=SAFETY_MARGIN_SECONDS)
 
@@ -912,17 +912,7 @@ def start_pre_process(message_queue, stop_event, inputs):
 
         if stop_event.is_set(): return
 
-        # 8. Apply Booking Delay (예약 지연) - 골든 타임 직후 대기
-        try:
-            if booking_delay > 0.001:
-                log_message(f"⏳ 설정된 예약 지연 ({booking_delay:.3f}초) 적용...", message_queue)
-                time.sleep(booking_delay)
-        except Exception:
-            pass
-
-        if stop_event.is_set(): return
-
-        # 9. Fetch, Filter, Sort Tee Times
+        # 8. Fetch, Filter, Sort Tee Times
         log_message("🔎 🚀 **[골든 타임]** 티 타임 조회 시작 (HTML 요청)...", message_queue)
         all_times_html = core.get_all_available_times(inputs['target_date'])
 
@@ -949,6 +939,17 @@ def start_pre_process(message_queue, stop_event, inputs):
             log_message("ℹ️ 설정된 조건에 맞는 예약 가능 시간대가 없습니다. API 예약 중단.", message_queue)
             log_message(f"❌ 예약 프로세스 실패.", message_queue)
             return
+
+        # 📌 [수정된 위치] 9. Apply Booking Delay (예약 지연) - 정렬 완료 후, 예약 시도 직전
+        # 이 지연은 '티타임 조회 및 정렬 후, 실제 예약 시도 전에' 적용됩니다.
+        try:
+            if booking_delay > 0.001:
+                log_message(f"⏳ 설정된 예약 지연 ({booking_delay:.3f}초) 적용...", message_queue)
+                time.sleep(booking_delay)
+        except Exception:
+            pass
+
+        if stop_event.is_set(): return
 
         # 10. Start Booking Sequence (최종 예약 시도)
         if not inputs['test_mode']:
@@ -979,7 +980,6 @@ def start_pre_process(message_queue, stop_event, inputs):
         except Exception:
             pass
         log_message("✅ 백그라운드 스레드 종료.", message_queue)
-
 # ============================================================
 # Streamlit UI
 # ============================================================
