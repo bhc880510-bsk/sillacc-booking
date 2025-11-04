@@ -1,4 +1,4 @@
-# 경주신라CC Streamlit 앱 (최종 완료 - 인용 마커 삭제 완료)
+# 경주신라cc-완료-streamlit_app.py (로그인 후 딜레이 추가)
 import warnings
 
 # RuntimeWarning: coroutine '...' was never awaited 경고를 무시하도록 설정
@@ -817,6 +817,11 @@ def start_pre_process(message_queue, stop_event, inputs):
         log_message("✅ 로그인 성공.", message_queue)
 
         if stop_event.is_set(): return
+
+        # 🔽 [추가] 요청하신 2초 딜레이 삽입 (세션 안정화 대기)
+        log_message("⏳ 로그인 성공. 세션 활성화 전 2초간 대기 (에러 방지)...", message_queue)
+        time.sleep(2.0)
+        # 🔼 [추가 완료]
 
         # 2. Server Time Check & Target Time Calculation (Initial Offset)
         log_message("🔄 경주신라CC 서버 시간 확인 시도...", message_queue)
