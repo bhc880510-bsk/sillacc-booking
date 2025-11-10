@@ -1319,7 +1319,7 @@ with st.container(border=True):
             "사용자ID",
             key="id_input",
             disabled=st.session_state.is_running,
-            on_change=validate_id_on_change  # <-- 이 줄을 추가하세요
+            #on_change=validate_id_on_change  # <-- 이 줄을 추가하세요
         )
     with col2:
         st.text_input("암호", type="password", key="pw_input", disabled=st.session_state.is_running)
@@ -1399,7 +1399,7 @@ with col_start:
     st.button(
         "🚀 예약 시작",
         on_click=run_booking,
-        disabled=st.session_state.is_running or not st.session_state.is_id_valid,
+        disabled=st.session_state.is_running,
         type="primary",
         help="ID가 유효해야 버튼이 활성화됩니다."  # [추가] 툴팁
     )
