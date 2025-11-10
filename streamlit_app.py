@@ -556,14 +556,14 @@ class APIBookingCore:
         # 시간(x[0])이 1차 정렬 기준, 코스 코드(x[1])가 2차 정렬 기준 (안정성)
         final_filtered_times.sort(key=lambda x: (x[0], x[1]), reverse=is_reverse)
 
-        # 7. 상위 5개 로그 출력
+        # 7. 상위 3개 로그 출력
         formatted_times = [f"{format_time_for_display(t[0])} ({t[2]})" for t in
                            final_filtered_times]  # t[2] = course_nm
 
         self.log_message(f"🔍 필터링/정렬 완료 (순서: {'역순' if is_reverse else '순차'}) - {len(final_filtered_times)}개 발견")
         if formatted_times:
-            self.log_message("📜 **[최종 예약 우선순위 5개]**")
-            for i, time_str in enumerate(formatted_times[:5]):
+            self.log_message("📜 **[최종 예약 우선순위 3개]**")  # <-- 수정
+            for i, time_str in enumerate(formatted_times[:3]):  # <-- 수정
                 self.log_message(f"   {i + 1}순위: {time_str}")
 
         return final_filtered_times
@@ -741,10 +741,10 @@ class APIBookingCore:
             self.log_message(f"✅ 테스트 모드: 1순위 예약 가능 시간 확인: {formatted_time} (실제 예약 시도 안함)")
             return True  # Indicate test mode completion
 
-        self.log_message(f"🔎 정렬된 시간 순서대로 (상위 {min(5, len(sorted_available_times))}개) 예약 시도...")
+        self.log_message(f"🔎 정렬된 시간 순서대로 (상위 {min(3, len(sorted_available_times))}개) 예약 시도...")  # <-- 수정
 
-        # Try booking the top 5
-        for i, time_info in enumerate(sorted_available_times[:5]):
+        # Try booking the top 3 (수정됨)
+        for i, time_info in enumerate(sorted_available_times[:3]):  # <-- 수정
             if self.stop_event.is_set():
                 self.log_message("🛑 예약 시도 중 중단됨.")
                 break
@@ -788,7 +788,7 @@ class APIBookingCore:
 
         # Outer loop (top 5 times) finished without success
         if not self.stop_event.is_set():
-            self.log_message(f"❌ 상위 {min(5, len(sorted_available_times))}개 시간대 예약 시도 최종 실패.")
+            self.log_message(f"❌ 상위 {min(3, len(sorted_available_times))}개 시간대 예약 시도 최종 실패.")  # <-- 수정
 
         return False
 
@@ -1034,7 +1034,7 @@ if 'course_input' not in st.session_state:
 if 'order_input' not in st.session_state:
     st.session_state.order_input = "역순(▼)"  # Default to Reverse order
 if 'delay_input' not in st.session_state:
-    st.session_state.delay_input = "1.0"  # Default delay
+    st.session_state.delay_input = "0.0"  # Default delay
 if 'test_mode_checkbox' not in st.session_state:
     st.session_state.test_mode_checkbox = True  # Default to Test Mode ON
 # [새로 추가] ID 유효성 상태를 추적하는 변수
